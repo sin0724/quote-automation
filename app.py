@@ -26,26 +26,60 @@ logger = logging.getLogger(__name__)
 
 _DIR = os.path.dirname(os.path.abspath(__file__))
 
+# ── Korean font setup ─────────────────────────────────────────────────────────
+
 def _register_font() -> str:
-    """NanumGothic(산세리프) 다운로드 시도 → 실패 시 HYSMyeongJo 폴백."""
-    nanum_path = os.path.join(_DIR, 'NanumGothic.ttf')
-    nanum_url  = 'https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/nanumgothic/NanumGothic-Regular.ttf'
-    if not os.path.exists(nanum_path):
-        try:
-            urllib.request.urlretrieve(nanum_url, nanum_path)
-            logger.info('NanumGothic 폰트 다운로드 완료')
-        except Exception as e:
-            logger.warning('폰트 다운로드 실패, 폴백 사용: %s', e)
-    if os.path.exists(nanum_path):
-        try:
-            pdfmetrics.registerFont(TTFont('NanumGothic', nanum_path))
-            return 'NanumGothic'
-        except Exception as e:
-            logger.warning('TTFont 등록 실패: %s', e)
+    """NanumGothic(Regular+Bold) 다운로드 → 실패 시 HYSMyeongJo CID 폴백."""
+    _base = 'https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/nanumgothic/'
+    _fonts = [
+        ('NanumGothic',      'NanumGothic-Regular.ttf', 'NanumGothic.ttf'),
+        ('NanumGothic-Bold', 'NanumGothic-Bold.ttf',    'NanumGothic-Bold.ttf'),
+    ]
+    ok = True
+    for name, url_file, local_file in _fonts:
+        path = os.path.join(_DIR, local_file)
+        if not os.path.exists(path):
+            try:
+                urllib.request.urlretrieve(_base + url_file, path)
+            except Exception as e:
+                logger.warning('폰트 다운로드 실패 (%s): %s', url_file, e)
+                ok = False
+                break
+        if ok:
+            try:
+                pdfmetrics.registerFont(TTFont(name, path))
+            except Exception as e:
+                logger.warning('TTFont 등록 실패 (%s): %s', name, e)
+                ok = False
+                break
+
+    if ok:
+        pdfmetrics.registerFontFamily('NanumGothic',
+            normal='NanumGothic', bold='NanumGothic-Bold')
+        logger.info('NanumGothic 폰트 등록 완료')
+        return 'NanumGothic'
+
     pdfmetrics.registerFont(UnicodeCIDFont('HYSMyeongJo-Medium'))
+    logger.info('HYSMyeongJo-Medium CID 폰트 사용')
     return 'HYSMyeongJo-Medium'
 
 KR = _register_font()
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+
+RED   = colors.HexColor('#CC3333')
+LGRAY = colors.HexColor('#F7F7F7')
+MGRAY = colors.HexColor('#EEEEEE')
+WHITE = colors.white
+BLACK = colors.black
+DKGRAY = colors.HexColor('#555555')
+
+DEFAULT_NOTES = [
+    '본 견적은 기획과 고객의 요구사항에 따라 일부 견적은 가감될 수 있습니다.',
+    '최종 작업 범위 및 일정 확정 시 추가 비용이 발생할 수 있습니다.',
+    '본 견적서의 내용은 서면 합의 없이 수정할 수 없습니다.',
+    '본 견적 내용은 외부 유출을 금지합니다.',
+]
 
 # ── Environment ───────────────────────────────────────────────────────────────
 
@@ -55,23 +89,11 @@ COMPANY_BUSINESS_NUMBER = os.environ.get('COMPANY_BUSINESS_NUMBER', '')
 COMPANY_EMAIL           = os.environ.get('COMPANY_EMAIL', '')
 COMPANY_ADDRESS         = os.environ.get('COMPANY_ADDRESS', '')
 COMPANY_CONTACT         = os.environ.get('COMPANY_CONTACT', '')
-COMPANY_LOGO  = os.environ.get('COMPANY_LOGO',  os.path.join(_DIR, '자산 17_투명배경.png'))
-COMPANY_STAMP = os.environ.get('COMPANY_STAMP', '')
+COMPANY_LOGO            = os.environ.get('COMPANY_LOGO',  os.path.join(_DIR, '자산 17_투명배경.png'))
+COMPANY_STAMP           = os.environ.get('COMPANY_STAMP', '')
 OUTPUT_DIR              = os.environ.get('OUTPUT_DIR', '/tmp/output')
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-RED   = colors.HexColor('#CC3333')
-LGRAY = colors.HexColor('#F5F5F5')
-WHITE = colors.white
-BLACK = colors.black
-
-DEFAULT_NOTES = [
-    '본 견적은 기획과 고객의 요구사항에 따라 일부 견적은 가감될 수 있습니다.',
-    '최종 작업 범위 및 일정 확정 시 추가 비용이 발생할 수 있습니다.',
-    '본 견적서의 내용은 서면 합의 없이 수정할 수 없습니다.',
-    '본 견적 내용은 외부 유출을 금지합니다.',
-]
 
 # ── Flask ─────────────────────────────────────────────────────────────────────
 
@@ -114,32 +136,21 @@ def parse_items(text: str) -> list:
         parts = [p.strip() for p in line.split('/')]
         if len(parts) < 2:
             continue
-
-        name  = parts[0]
-        desc  = ''
-        price = 0
-        qty   = 1
-        unit  = 'EA'
-
+        name, desc, price, qty, unit = parts[0], '', 0, 1, 'EA'
         if len(parts) == 2:
             price = parse_number(parts[1])
         elif len(parts) == 3:
-            if parse_number(parts[1]) > 0:      # name / price / qty
-                price = parse_number(parts[1])
-                qty   = max(1, parse_number(parts[2]))
-            else:                                # name / desc / price
-                desc  = parts[1]
-                price = parse_number(parts[2])
-        elif len(parts) == 4:                    # name / desc / price / qty
-            desc  = parts[1]
-            price = parse_number(parts[2])
-            qty   = max(1, parse_number(parts[3]))
-        else:                                    # name / desc / price / qty / unit
-            desc  = parts[1]
+            if parse_number(parts[1]) > 0:
+                price, qty = parse_number(parts[1]), max(1, parse_number(parts[2]))
+            else:
+                desc, price = parts[1], parse_number(parts[2])
+        elif len(parts) == 4:
+            desc, price, qty = parts[1], parse_number(parts[2]), max(1, parse_number(parts[3]))
+        else:
+            desc = parts[1]
             price = parse_number(parts[2])
             qty   = max(1, parse_number(parts[3]))
             unit  = parts[4] if parts[4] else 'EA'
-
         items.append({'name': name, 'desc': desc, 'price': price,
                       'qty': qty, 'unit': unit, 'amount': qty * price})
     return items
@@ -148,7 +159,6 @@ def parse_items(text: str) -> list:
 def calc_summary(items: list, discount: int, tax_type: str) -> dict:
     items_total    = sum(i['amount'] for i in items)
     after_discount = items_total - discount
-
     if '포함' in tax_type:
         supply = int(after_discount / 1.1)
         vat    = after_discount - supply
@@ -157,189 +167,202 @@ def calc_summary(items: list, discount: int, tax_type: str) -> dict:
         supply = after_discount
         vat    = int(supply * 0.1)
         final  = supply + vat
-
-    return {
-        'items_total': items_total,
-        'discount':    discount,
-        'supply':      supply,
-        'vat':         vat,
-        'final':       final,
-    }
+    return {'items_total': items_total, 'discount': discount,
+            'supply': supply, 'vat': vat, 'final': final}
 
 
-def fmt(n: int) -> str:
+def won(n: int) -> str:
     return f'{n:,}원'
 
+# ── Paragraph helper ──────────────────────────────────────────────────────────
 
-def p(text, size=9, bold=False, align=0, color=BLACK, leading=None):
-    style = ParagraphStyle(
-        'x', fontName=KR, fontSize=size,
-        leading=leading or size * 1.6,
-        alignment=align, textColor=color,
-        fontWeight='Bold' if bold else 'Normal',
-    )
-    return Paragraph(str(text), style)
+def tx(text, size=9, bold=False, align=0, color=BLACK, leading=None):
+    """Paragraph with auto XML-escape. bold=True wraps in <b> tag."""
+    style = ParagraphStyle('_', fontName=KR, fontSize=size,
+                           leading=leading or max(size * 1.55, size + 3),
+                           alignment=align, textColor=color)
+    safe = escape(str(text))
+    return Paragraph(f'<b>{safe}</b>' if bold else safe, style)
 
-# ── PDF ───────────────────────────────────────────────────────────────────────
+
+def tx_raw(html, size=9, align=0, color=BLACK, leading=None):
+    """Paragraph with raw HTML (caller handles escaping)."""
+    style = ParagraphStyle('_', fontName=KR, fontSize=size,
+                           leading=leading or max(size * 1.55, size + 3),
+                           alignment=align, textColor=color)
+    return Paragraph(html, style)
+
+# ── PDF generation ────────────────────────────────────────────────────────────
 
 def generate_pdf(data: dict) -> tuple:
     today    = datetime.now().strftime('%Y년 %m월 %d일')
     today_fn = datetime.now().strftime('%Y-%m-%d')
-    safe     = lambda s: re.sub(r'[\\/*?:"<>|]', '_', s)
-    filename = f"{today_fn}_{safe(data['client'])}_{safe(data.get('quote_name','견적'))}.pdf"
+    safe_fn  = lambda s: re.sub(r'[\\/*?:"<>|]', '_', s)
+    filename = f"{today_fn}_{safe_fn(data['client'])}_{safe_fn(data.get('quote_name','견적'))}.pdf"
     filepath = os.path.join(OUTPUT_DIR, filename)
 
-    summary = calc_summary(data['items'], data['discount'], data['tax_type'])
+    s   = calc_summary(data['items'], data['discount'], data['tax_type'])
+    W   = 170 * mm   # 210mm - 20mm*2 margins
 
     doc = SimpleDocTemplate(
         filepath, pagesize=A4,
-        rightMargin=18*mm, leftMargin=18*mm,
-        topMargin=16*mm, bottomMargin=16*mm,
+        leftMargin=20*mm, rightMargin=20*mm,
+        topMargin=18*mm, bottomMargin=18*mm,
     )
-    W = A4[0] - 36*mm   # usable width = 174mm
 
     elems = []
 
-    # ── Logo ──────────────────────────────────────────────────────────────────
+    # ── 1. Logo ───────────────────────────────────────────────────────────────
     if COMPANY_LOGO and os.path.exists(COMPANY_LOGO):
-        # 원본 비율 3403×838 유지, 폭 55mm 기준
-        elems.append(Image(COMPANY_LOGO, width=55*mm, height=13.5*mm))
+        elems.append(Image(COMPANY_LOGO, width=52*mm, height=12.8*mm))
     else:
-        elems.append(p(COMPANY_NAME, size=16, bold=True, color=RED))
-    elems.append(Spacer(1, 4*mm))
+        elems.append(tx(COMPANY_NAME, size=15, bold=True, color=RED))
+    elems.append(Spacer(1, 5*mm))
 
-    # ── Title ─────────────────────────────────────────────────────────────────
-    elems.append(p('외주 견적서', size=22, bold=True))
-    elems.append(Spacer(1, 4*mm))
+    # ── 2. Title ──────────────────────────────────────────────────────────────
+    elems.append(tx('외주 견적서', size=24, bold=True))
+    elems.append(Spacer(1, 5*mm))
 
-    # ── Date / recipient line ─────────────────────────────────────────────────
-    date_row = Table(
-        [[p(f'견적일자: {today}', size=8.5),
-          p(f'수신자: {escape(data["client"])}', size=8.5)]],
-        colWidths=[W * 0.45, W * 0.55],
+    # ── 3. Date / recipient ───────────────────────────────────────────────────
+    meta = Table(
+        [[tx(f'견적일자: {today}', size=8.5, color=DKGRAY),
+          tx(f'수신자: {data["client"]}', size=8.5, color=DKGRAY)]],
+        colWidths=[W * 0.5, W * 0.5],
     )
-    date_row.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
-    elems.append(date_row)
-    elems.append(Spacer(1, 2*mm))
-    elems.append(HRFlowable(width='100%', thickness=0.5, color=colors.grey))
+    meta.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
+    elems.append(meta)
     elems.append(Spacer(1, 3*mm))
+    elems.append(HRFlowable(width='100%', thickness=0.6, color=colors.HexColor('#CCCCCC')))
+    elems.append(Spacer(1, 4*mm))
 
-    # ── Supplier block ────────────────────────────────────────────────────────
-    def info_line(label, val):
-        return p(f'{label}  {escape(val)}', size=8.5)
-
-    supplier_lines = [
-        p('공급자', size=8, color=colors.grey),
-        p(COMPANY_NAME, size=13, bold=True),
-        Spacer(1, 1*mm),
-        info_line('사업자', COMPANY_BUSINESS_NUMBER),
-        info_line('대표자', COMPANY_REPRESENTATIVE),
+    # ── 4. Supplier info ──────────────────────────────────────────────────────
+    info_lines = [
+        f'<font color="#888888" size="8">공급자</font>',
+        f'<b><font size="13">{escape(COMPANY_NAME)}</font></b>',
+        '',
     ]
-    if COMPANY_EMAIL:
-        supplier_lines.append(info_line('이메일', COMPANY_EMAIL))
-    if COMPANY_CONTACT:
-        supplier_lines.append(info_line('연락처', COMPANY_CONTACT))
-    if COMPANY_ADDRESS:
-        supplier_lines.append(info_line('소재지', COMPANY_ADDRESS))
+    for label, val in [
+        ('사업자', COMPANY_BUSINESS_NUMBER),
+        ('대표자', COMPANY_REPRESENTATIVE),
+        ('이메일', COMPANY_EMAIL),
+        ('연락처', COMPANY_CONTACT),
+        ('소재지', COMPANY_ADDRESS),
+    ]:
+        if val:
+            info_lines.append(f'<font size="8.5"><font color="#888888">{label}</font>  {escape(val)}</font>')
 
-    # Stamp image (right of supplier block)
+    supplier_para = tx_raw('<br/>'.join(info_lines), size=8.5, leading=15)
+
     if COMPANY_STAMP and os.path.exists(COMPANY_STAMP):
         stamp_cell = Image(COMPANY_STAMP, width=22*mm, height=22*mm)
     else:
-        stamp_cell = p('')
+        stamp_cell = Spacer(1, 1)
 
-    from reportlab.platypus import KeepInFrame
-    supplier_frame = KeepInFrame(
-        maxWidth=W * 0.72, maxHeight=35*mm,
-        content=supplier_lines, mode='shrink',
-    )
     supplier_row = Table(
-        [[supplier_frame, stamp_cell]],
+        [[supplier_para, stamp_cell]],
         colWidths=[W * 0.72, W * 0.28],
     )
-    supplier_row.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP')]))
+    supplier_row.setStyle(TableStyle([
+        ('VALIGN',       (0,0), (-1,-1), 'TOP'),
+        ('LEFTPADDING',  (0,0), (-1,-1), 0),
+        ('RIGHTPADDING', (0,0), (-1,-1), 0),
+    ]))
     elems.append(supplier_row)
+    elems.append(Spacer(1, 5*mm))
+    elems.append(HRFlowable(width='100%', thickness=0.6, color=colors.HexColor('#CCCCCC')))
     elems.append(Spacer(1, 4*mm))
 
-    # ── Items table ───────────────────────────────────────────────────────────
-    # 항목(28) 설명(72) 단가(26) 수량(16) 단위(16) 금액(16) = 174mm
-    cw = [28*mm, 72*mm, 26*mm, 16*mm, 16*mm, 16*mm]
+    # ── 5. Items table ────────────────────────────────────────────────────────
+    # 항목26 + 설명68 + 단가26 + 수량15 + 단위15 + 금액20 = 170mm
+    cw = [26*mm, 68*mm, 26*mm, 15*mm, 15*mm, 20*mm]
 
-    def hdr(txt):
-        return p(txt, size=9, bold=True, align=1, color=WHITE)
+    def hdr(t):
+        return tx(t, size=9, bold=True, align=1, color=WHITE)
 
     rows = [[hdr('항목'), hdr('설명'), hdr('단가'), hdr('수량'), hdr('단위'), hdr('금액')]]
 
     for item in data['items']:
         rows.append([
-            p(escape(item['name']), size=8.5),
-            p(escape(item['desc']), size=8.5),
-            p(f"{item['price']:,}원", size=8.5, align=2),
-            p(str(item['qty']),       size=8.5, align=1),
-            p(item['unit'],           size=8.5, align=1),
-            p(f"{item['amount']:,}원", size=8.5, align=2),
+            tx(item['name'], size=8.5),
+            tx(item['desc'], size=8.5),
+            tx(won(item['price']), size=8.5, align=2),
+            tx(item['qty'],        size=8.5, align=1),
+            tx(item['unit'],       size=8.5, align=1),
+            tx(won(item['amount']),size=8.5, align=2),
         ])
 
+    # 최소 5행 유지 (빈 행으로 채움)
     while len(rows) < 6:
-        rows.append([p('')] * 6)
+        rows.append([tx('')] * 6)
 
     item_t = Table(rows, colWidths=cw, repeatRows=1)
     item_t.setStyle(TableStyle([
-        ('BACKGROUND',    (0, 0), (-1, 0),  RED),
+        # Header
+        ('BACKGROUND',    (0, 0), (-1,  0), RED),
+        ('LINEBELOW',     (0, 0), (-1,  0), 1.5, RED),
+        # Body alternating
         ('ROWBACKGROUNDS',(0, 1), (-1, -1), [WHITE, LGRAY]),
+        # Grid
         ('GRID',          (0, 0), (-1, -1), 0.4, colors.HexColor('#DDDDDD')),
-        ('LINEBELOW',     (0, 0), (-1, 0),  1,   RED),
+        ('LINEBELOW',     (0,-1), (-1, -1), 0.8, colors.HexColor('#BBBBBB')),
+        # Alignment & padding
         ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING',    (0, 0), (-1, -1), 5),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-        ('LEFTPADDING',   (0, 0), (-1, -1), 4),
-        ('RIGHTPADDING',  (0, 0), (-1, -1), 4),
+        ('TOPPADDING',    (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('LEFTPADDING',   (0, 0), (-1, -1), 5),
+        ('RIGHTPADDING',  (0, 0), (-1, -1), 5),
     ]))
     elems.append(item_t)
-    elems.append(Spacer(1, 6*mm))
+    elems.append(Spacer(1, 7*mm))
 
-    # ── Bottom: 참고사항 (left) + summary (right) ─────────────────────────────
-    # Notes
-    note_lines = ['<b>참고사항</b><br/><br/>']
+    # ── 6. Bottom: notes (left) + summary (right) ─────────────────────────────
+    # Notes ─────────────────────────────────────────────────────
+    note_html = ['<b>참고사항</b><br/><br/>']
     for i, n in enumerate(DEFAULT_NOTES, 1):
-        note_lines.append(f'{i}. {escape(n)}<br/>')
+        note_html.append(f'{i}. {escape(n)}<br/>')
     if data.get('note'):
-        note_lines.append(f'<br/>{escape(data["note"])}')
-    note_para = Paragraph(
-        ''.join(note_lines),
-        ParagraphStyle('notes', fontName=KR, fontSize=8.5, leading=15),
-    )
+        note_html.append(f'<br/>{escape(data["note"])}')
+    notes_para = tx_raw(''.join(note_html), size=8.5, leading=16)
 
-    # Summary table
-    disc_str = f'-{fmt(summary["discount"])}' if summary['discount'] > 0 else '-'
+    # Summary ────────────────────────────────────────────────────
+    disc_str = f'-{won(s["discount"])}' if s['discount'] > 0 else '  -'
     sum_rows = [
-        [p('총 합계',           size=9, align=2), p(fmt(summary['items_total']), size=9, align=2)],
-        [p('할인',              size=9, align=2), p(disc_str,                    size=9, align=2)],
-        [p('공급가액',           size=9, align=2), p(fmt(summary['supply']),      size=9, align=2)],
-        [p('VAT (10%)',         size=9, align=2), p(fmt(summary['vat']),          size=9, align=2)],
-        [p('최종 견적 (VAT 포함)', size=9, bold=True, align=2, color=WHITE),
-         p(fmt(summary['final']),size=9, bold=True, align=2, color=WHITE)],
+        [tx('총 합계',           size=8.5, align=2),
+         tx(won(s['items_total']),size=8.5, align=2)],
+        [tx('할인',              size=8.5, align=2),
+         tx(disc_str,            size=8.5, align=2)],
+        [tx('공급가액',           size=8.5, align=2),
+         tx(won(s['supply']),    size=8.5, align=2)],
+        [tx('VAT (10%)',         size=8.5, align=2),
+         tx(won(s['vat']),       size=8.5, align=2)],
+        [tx('최종 견적 (VAT 포함)', size=9, bold=True, align=2, color=WHITE),
+         tx(won(s['final']),      size=9, bold=True, align=2, color=WHITE)],
     ]
-    sum_t = Table(sum_rows, colWidths=[42*mm, 30*mm])
+    # 44+32 = 76mm (summary 전체 너비)
+    sum_t = Table(sum_rows, colWidths=[44*mm, 32*mm])
     sum_t.setStyle(TableStyle([
-        ('GRID',          (0, 0), (-1, -1), 0.4, colors.HexColor('#CCCCCC')),
+        ('GRID',          (0, 0), (-1, -2), 0.4, colors.HexColor('#CCCCCC')),
+        ('LINEABOVE',     (0, 4), (-1,  4), 0,   WHITE),  # last row no top grid
+        ('BOX',           (0, 0), (-1, -1), 0.4, colors.HexColor('#CCCCCC')),
         ('BACKGROUND',    (0, 4), (-1,  4), RED),
-        ('LINEABOVE',     (0, 4), (-1,  4), 1, RED),
+        ('ROWBACKGROUNDS',(0, 0), (-1, -2), [WHITE, MGRAY, WHITE, MGRAY]),
         ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
         ('TOPPADDING',    (0, 0), (-1, -1), 5),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-        ('RIGHTPADDING',  (0, 0), (-1, -1), 6),
-        ('LEFTPADDING',   (0, 0), (-1, -1), 4),
+        ('RIGHTPADDING',  (0, 0), (-1, -1), 7),
+        ('LEFTPADDING',   (0, 0), (-1, -1), 5),
     ]))
 
+    # 94+76 = 170mm
     bottom = Table(
-        [[note_para, sum_t]],
-        colWidths=[W - 72*mm, 72*mm],
+        [[notes_para, sum_t]],
+        colWidths=[94*mm, 76*mm],
     )
     bottom.setStyle(TableStyle([
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('LEFTPADDING',  (0, 0), (-1, -1), 0),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ('VALIGN',       (0,0), (-1,-1), 'TOP'),
+        ('LEFTPADDING',  (0,0), (-1,-1), 0),
+        ('RIGHTPADDING', (0,0), (-1,-1), 0),
+        ('TOPPADDING',   (0,0), (-1,-1), 0),
     ]))
     elems.append(bottom)
 
@@ -402,7 +425,7 @@ def build_modal(channel_id: str) -> dict:
             },
             {
                 'type': 'input', 'block_id': 'discount',
-                'label': {'type': 'plain_text', 'text': '할인 금액 (없으면 0)'},
+                'label': {'type': 'plain_text', 'text': '할인 금액 (없으면 비워두세요)'},
                 'optional': True,
                 'element': {
                     'type': 'plain_text_input', 'action_id': 'value',
@@ -468,7 +491,7 @@ def handle_submission(ack, body, client):
 
     try:
         filepath, filename = generate_pdf(data)
-        s = calc_summary(items, discount, data['tax_type'])
+        sm = calc_summary(items, discount, data['tax_type'])
 
         with open(filepath, 'rb') as f:
             client.files_upload_v2(
@@ -478,7 +501,7 @@ def handle_submission(ack, body, client):
                 title=f"{data['client']} 외주 견적서",
                 initial_comment=(
                     f"✅ *{escape(data['client'])}* 견적서가 생성되었습니다.\n"
-                    f"💰 최종 견적 (VAT 포함): {fmt(s['final'])}"
+                    f"💰 최종 견적 (VAT 포함): {won(sm['final'])}"
                 ),
             )
         os.remove(filepath)
