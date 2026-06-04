@@ -2,6 +2,7 @@ import os
 import re
 import threading
 import logging
+import urllib.request
 from datetime import datetime
 from xml.sax.saxutils import escape
 
@@ -18,13 +19,33 @@ from reportlab.platypus import (
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.pdfbase.ttfonts import TTFont
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
 
-# Gothic (sans-serif) Korean CID font — matches template style
-pdfmetrics.registerFont(UnicodeCIDFont('HYGoThic-Medium'))
-KR = 'HYGoThic-Medium'
+_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def _register_font() -> str:
+    """NanumGothic(산세리프) 다운로드 시도 → 실패 시 HYSMyeongJo 폴백."""
+    nanum_path = os.path.join(_DIR, 'NanumGothic.ttf')
+    nanum_url  = 'https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/nanumgothic/NanumGothic-Regular.ttf'
+    if not os.path.exists(nanum_path):
+        try:
+            urllib.request.urlretrieve(nanum_url, nanum_path)
+            logger.info('NanumGothic 폰트 다운로드 완료')
+        except Exception as e:
+            logger.warning('폰트 다운로드 실패, 폴백 사용: %s', e)
+    if os.path.exists(nanum_path):
+        try:
+            pdfmetrics.registerFont(TTFont('NanumGothic', nanum_path))
+            return 'NanumGothic'
+        except Exception as e:
+            logger.warning('TTFont 등록 실패: %s', e)
+    pdfmetrics.registerFont(UnicodeCIDFont('HYSMyeongJo-Medium'))
+    return 'HYSMyeongJo-Medium'
+
+KR = _register_font()
 
 # ── Environment ───────────────────────────────────────────────────────────────
 
@@ -34,7 +55,6 @@ COMPANY_BUSINESS_NUMBER = os.environ.get('COMPANY_BUSINESS_NUMBER', '')
 COMPANY_EMAIL           = os.environ.get('COMPANY_EMAIL', '')
 COMPANY_ADDRESS         = os.environ.get('COMPANY_ADDRESS', '')
 COMPANY_CONTACT         = os.environ.get('COMPANY_CONTACT', '')
-_DIR = os.path.dirname(os.path.abspath(__file__))
 COMPANY_LOGO  = os.environ.get('COMPANY_LOGO',  os.path.join(_DIR, '자산 17_투명배경.png'))
 COMPANY_STAMP = os.environ.get('COMPANY_STAMP', '')
 OUTPUT_DIR              = os.environ.get('OUTPUT_DIR', '/tmp/output')
