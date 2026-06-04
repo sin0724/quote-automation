@@ -46,7 +46,13 @@ def root():
 
 # ── Slack Bolt app ────────────────────────────────────────────────────────────
 
-bolt_app = App(token=os.environ['SLACK_BOT_TOKEN'])
+_bot_token = os.environ.get('SLACK_BOT_TOKEN')
+_app_token = os.environ.get('SLACK_APP_TOKEN')
+if not _bot_token or not _app_token:
+    missing = [k for k, v in [('SLACK_BOT_TOKEN', _bot_token), ('SLACK_APP_TOKEN', _app_token)] if not v]
+    raise SystemExit(f"[ERROR] 환경변수가 설정되지 않았습니다: {', '.join(missing)}\nRailway Variables 탭에서 추가하세요.")
+
+bolt_app = App(token=_bot_token)
 
 # ── Parsing helpers ───────────────────────────────────────────────────────────
 
@@ -365,4 +371,4 @@ def _run_web():
 if __name__ == '__main__':
     logger.info('Quote automation bot started')
     threading.Thread(target=_run_web, daemon=True).start()
-    SocketModeHandler(bolt_app, os.environ['SLACK_APP_TOKEN']).start()
+    SocketModeHandler(bolt_app, _app_token).start()
